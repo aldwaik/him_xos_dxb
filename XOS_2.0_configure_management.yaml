@@ -1,14 +1,10 @@
 ---
-- name: Configure XOS Management bond (bond-mgmt) + set static hostname
+- name: Configure XOS Management bond (bond-mgmt) + hostname reconciliation
   hosts: all
   become: true
   gather_facts: true
 
   vars:
-    # ---- Hostname policy ----
-    # Provide via inventory/group_vars or CLI: -e static_hostname=xos-001
-    static_hostname: "{{ static_hostname | default(omit) }}"
-
     # ---- Bond/Interfaces ----
     bond_name: "bond-mgmt"
     slave1_con: "bond-mgmt-interface-1"
@@ -39,6 +35,13 @@
       changed_when: false
       failed_when: false
 
+    - name: Debug hostname state
+      debug:
+        msg:
+          - "Runtime hostname : {{ runtime_hostname.stdout | trim }}"
+          - "/etc/hostname    : {{ file_hostname.stdout | default('') | trim }}"
+          - "Hostname match   : {{ (runtime_hostname.stdout | trim) == (file_hostname.stdout | default('') | trim) }}"
+
     - name: Update /etc/hostname to match runtime hostname if different
       copy:
         content: "{{ runtime_hostname.stdout | trim }}\n"
@@ -46,12 +49,12 @@
         owner: root
         group: root
         mode: '0644'
-      when: runtime_hostname.stdout | trim != file_hostname.stdout | trim
+      when: runtime_hostname.stdout | trim != file_hostname.stdout | default('') | trim
 
     - name: Ensure system hostname matches runtime hostname
       ansible.builtin.hostname:
         name: "{{ runtime_hostname.stdout | trim }}"
-      when: runtime_hostname.stdout | trim != file_hostname.stdout | trim
+      when: runtime_hostname.stdout | trim != file_hostname.stdout | default('') | trim
 
     # --------------------------
     # Preconditions
@@ -66,16 +69,32 @@
       register: nm_devs
       changed_when: false
 
+    - name: Debug static configuration variables
+      debug:
+        msg:
+          bond_name: "{{ bond_name }}"
+          slave1_if: "{{ slave1_if }}"
+          slave2_if: "{{ slave2_if }}"
+          slave1_con: "{{ slave1_con }}"
+          slave2_con: "{{ slave2_con }}"
+          gateway: "{{ gw }}"
+          dns: "{{ dns }}"
+          dns_search: "{{ dns_search }}"
+          bond_options: "{{ bond_options }}"
+
+    - name: Debug detected NetworkManager devices
+      debug:
+        var: nm_devs.stdout_lines
+
     - name: Fail if eno1 or eno2 are missing
       fail:
-        msg: "Required interfaces not found. Need eno1 and eno2. Found: {{ nm_devs.stdout_lines }}"
+        msg: "Required interfaces not found. Need {{ slave1_if }} and {{ slave2_if }}. Found: {{ nm_devs.stdout_lines }}"
       when: >
         (slave1_if not in nm_devs.stdout_lines) or
         (slave2_if not in nm_devs.stdout_lines)
 
     # --------------------------
-    # Debug-only network_info
-    # (kept per your feedback)
+    # Debug-only network_info (eno1)
     # --------------------------
     - name: Debug network info (device show for eno1)
       command: "nmcli dev show {{ slave1_if }}"
@@ -98,6 +117,12 @@
       set_fact:
         ip_addr: "{{ (eno1_ip_raw.stdout_lines | select('match','.+/.+') | list | first) | default('') }}"
 
+    - name: Debug IP extracted from eno1
+      debug:
+        msg:
+          - "Raw IP output from nmcli: {{ eno1_ip_raw.stdout_lines }}"
+          - "Selected IP for bond    : {{ ip_addr }}"
+
     - name: Fail if eno1 has no IPv4 address
       fail:
         msg: "eno1 has no IPv4 address according to nmcli. Output: {{ eno1_ip_raw.stdout_lines }}"
@@ -116,6 +141,13 @@
         bond_exists: "{{ bond_name in nm_con_names.stdout_lines }}"
         slave1_exists: "{{ slave1_con in nm_con_names.stdout_lines }}"
         slave2_exists: "{{ slave2_con in nm_con_names.stdout_lines }}"
+
+    - name: Debug NM connection existence
+      debug:
+        msg:
+          bond_exists: "{{ bond_exists }}"
+          slave1_exists: "{{ slave1_exists }}"
+          slave2_exists: "{{ slave2_exists }}"
 
     - name: Create bond connection if missing
       command: >
@@ -171,6 +203,16 @@
     - name: Reload NM connections
       command: nmcli con reload
       changed_when: false
+
+    - name: Debug final bond configuration intent
+      debug:
+        msg:
+          - "Bond name  : {{ bond_name }}"
+          - "Bond IP    : {{ ip_addr }}"
+          - "Gateway    : {{ gw }}"
+          - "DNS        : {{ dns }}"
+          - "DNS search : {{ dns_search }}"
+          - "Slaves     : {{ slave1_if }}, {{ slave2_if }}"
 
     - name: Bring up bond connection
       command: "nmcli con up {{ bond_name }}"
