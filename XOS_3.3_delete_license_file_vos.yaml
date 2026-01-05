@@ -1,0 +1,38 @@
+- name: Make sure required packages are installed
+  hosts: all
+  become: yes
+  tasks:
+    - name: Ensure expect package is installed
+      ansible.builtin.yum:
+        name: expect
+        state: present
+
+    - name: Check if the script already exists
+      ansible.builtin.stat:
+        path: /tmp/delete_license_file_vos.sh
+      register: script_stat
+
+    - name: Create the script on the remote server
+      ansible.builtin.copy:
+        dest: /tmp/delete_license_file_vos.sh
+        content: |
+          #!/bin/bash
+          expect <<EOF
+          spawn vosctl sh
+          expect "*# "
+          send "rm -f /var/lib/persistent/licensing/new_iso_install\r"
+          expect "*# "
+          send "exit\r"
+          expect eof
+          EOF
+        mode: '0755'
+      when: not script_stat.stat.exists
+
+    - name: Execute the script on the remote server
+      shell: /tmp/delete_license_file_vos.sh
+      register: script_execution
+      ignore_errors: yes
+
+    - name: Print script execution result
+      debug:
+        var: script_execution

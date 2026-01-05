@@ -1,0 +1,30 @@
+- name: Add docker and EPEL release repos
+  hosts: all
+  become: yes
+  tasks:
+    - name: Check if Docker repo file exists
+      ansible.builtin.stat:
+        path: /etc/yum.repos.d/docker-ce.repo
+      register: repo_file
+
+    - name: Install EPEL release
+      yum:
+        name: epel-release
+        state: present
+        
+    - name: Download Docker repo file if it does not exist
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker-ce.repo
+      when: not repo_file.stat.exists
+
+    # - name: Update all packages
+    #   ansible.builtin.dnf:
+    #     name: '*'
+    #     state: latest
+
+    # - name: Upgrade all packages
+    #   ansible.builtin.dnf:
+    #     name: '*'
+    #     state: latest
+    #     update_cache: yes

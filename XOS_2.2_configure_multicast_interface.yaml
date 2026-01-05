@@ -1,0 +1,142 @@
+---
+- name: Configure XOS multicast network interfaces
+  hosts: all
+  become: yes
+  vars:
+    interface_mgmt: "bond-mgmt"
+    primary_encoder_interface_mc_in_p:    "ens1f0"
+    primary_encoder_interface_mc_in_s:    "ens2f0"
+    primary_encoder_interface_mc_out_p:   "ens1f1"
+    primary_encoder_interface_mc_out_s:   "ens2f1"
+
+    secondary_encoder_interface_mc_in_p:  "ens1f0"
+    secondary_encoder_interface_mc_in_s:  "ens2f0"
+    secondary_encoder_interface_mc_out_p: "ens1f1"
+    secondary_encoder_interface_mc_out_s: "ens2f1"
+
+    primary_encoder_subnet_mc_in_p:    "10.70.5.0/24"
+    primary_encoder_subnet_mc_in_s:    "10.80.5.0/24"
+    primary_encoder_subnet_mc_out_p:   "10.70.7.0/24"
+    primary_encoder_subnet_mc_out_s:   "10.80.7.0/24"
+
+    secondary_encoder_subnet_mc_in_p:  "10.70.6.0/24"
+    secondary_encoder_subnet_mc_in_s:  "10.80.6.0/24"
+    secondary_encoder_subnet_mc_out_p: "10.70.8.0/24"
+    secondary_encoder_subnet_mc_out_s: "10.80.8.0/24"
+    last_octet: ""
+
+  tasks:
+    - name: Check if management interface is available
+      command: ip link show {{ item }}
+      register: result
+      failed_when: result.rc != 0
+      with_items:
+        - "{{ interface_mgmt }}"
+      ignore_errors: yes
+
+    - name: Fail if any interface is not available
+      fail:
+        msg: "Management interface is not available."
+      when: result.results | selectattr('rc', 'ne', 0) | list | length > 0
+
+    - name: Check IP configuration of management interface
+      command: nmcli -t -f IP4.ADDRESS,GENERAL.STATE device show {{ interface_mgmt }}
+      register: mgmt_ip_config
+
+    - name: Fail if management interface has no IP or is not UP
+      fail:
+        msg: "Management interface {{ interface_mgmt }} has no IP address or is not UP."
+      when: mgmt_ip_config.stdout | regex_search('IP4.ADDRESS[^\n]*') is not defined or mgmt_ip_config.stdout.find('GENERAL.STATE:100 (connected)') == -1
+
+    - name: Extract last octet of management interface IP
+      set_fact:
+        last_octet: "{{ mgmt_ip_config.stdout | regex_search('IP4.ADDRESS[^\n]*') | regex_replace('.*\\.', '') | regex_replace('/.*', '') }}"
+
+    - name: Print last octet
+      debug:
+        msg: "Last octet of management interface IP is {{ last_octet }}"
+
+    - name: Set primary encoder subnets
+      set_fact:
+        subnet_mc_in_p: "{{ primary_encoder_subnet_mc_in_p | regex_replace('.0/.*', '') }}"
+        subnet_mc_in_s: "{{ primary_encoder_subnet_mc_in_s | regex_replace('.0/.*', '') }}"
+        subnet_mc_out_p: "{{ primary_encoder_subnet_mc_out_p | regex_replace('.0/.*', '') }}"
+        subnet_mc_out_s: "{{ primary_encoder_subnet_mc_out_s | regex_replace('.0/.*', '') }}"
+        interface_mc_in_p: "{{ primary_encoder_interface_mc_in_p }}"
+        interface_mc_in_s: "{{ primary_encoder_interface_mc_in_s }}"
+        interface_mc_out_p: "{{ primary_encoder_interface_mc_out_p }}"
+        interface_mc_out_s: "{{ primary_encoder_interface_mc_out_s }}"
+      when: mgmt_ip_config.stdout.find('10.17.11.') != -1
+
+    - name: Set secondary encoder subnets
+      set_fact:
+        subnet_mc_in_p: "{{ secondary_encoder_subnet_mc_in_p | regex_replace('.0/.*', '') }}"
+        subnet_mc_in_s: "{{ secondary_encoder_subnet_mc_in_s | regex_replace('.0/.*', '') }}"
+        subnet_mc_out_p: "{{ secondary_encoder_subnet_mc_out_p | regex_replace('.0/.*', '') }}"
+        subnet_mc_out_s: "{{ secondary_encoder_subnet_mc_out_s | regex_replace('.0/.*', '') }}"
+        interface_mc_in_p: "{{ secondary_encoder_interface_mc_in_p }}"
+        interface_mc_in_s: "{{ secondary_encoder_interface_mc_in_s }}"
+        interface_mc_out_p: "{{ secondary_encoder_interface_mc_out_p }}"
+        interface_mc_out_s: "{{ secondary_encoder_interface_mc_out_s }}"
+      when: mgmt_ip_config.stdout.find('10.17.12.') != -1
+
+    - name: Check if multicast interfaces are available
+      command: ip link show {{ item }}
+      register: result_mc
+      failed_when: result_mc.rc != 0
+      with_items:
+        - "{{ interface_mc_in_p }}"
+        - "{{ interface_mc_in_s }}"
+        - "{{ interface_mc_out_p }}"
+        - "{{ interface_mc_out_s }}"
+      ignore_errors: yes
+
+    - name: Fail if multicast interface/s not available
+      fail:
+        msg: "Multicast interface/s not available."
+      when: result_mc.results | selectattr('rc', 'ne', 0) | list | length > 0
+
+    - name: Fail if encoder subnets are not set
+      fail:
+        msg: "Encoder subnets are not set."
+      when: subnet_mc_in_p is not defined or subnet_mc_in_s is not defined or subnet_mc_out_p is not defined or subnet_mc_out_s is not defined
+
+    - name: Delete old connections
+      shell: |
+        nmcli -t -f NAME,DEVICE con show | awk -F: '$2 == "" {print $1}' | xargs -I {} nmcli con delete "{}"
+        nmcli -t -f NAME con show | grep -E "^Wired connection" | xargs -I {} nmcli con delete "{}"
+        nmcli -t -f NAME con show | grep -E "^MC_" | xargs -I {} nmcli con delete "{}"
+        nmcli -t -f NAME con show | grep -E "^ens" | xargs -I {} nmcli con delete "{}"
+        nmcli -t -f NAME con show | grep -E "^eth" | xargs -I {} nmcli con delete "{}"
+      register: deleted_connections
+      ignore_errors: yes
+      failed_when: false
+
+    - name: Debug the deleted connections
+      debug:
+        msg: "Deleted connections: {{ deleted_connections.stdout_lines }}"
+
+    - name: Configure Multicast Interfaces and bring them up
+      shell: |
+        nmcli con add type ethernet ifname {{ interface_mc_in_p }} con-name MC_IN_P
+        nmcli con add type ethernet ifname {{ interface_mc_in_s }} con-name MC_IN_S
+        nmcli con add type ethernet ifname {{ interface_mc_out_p }} con-name MC_OUT_P
+        nmcli con add type ethernet ifname {{ interface_mc_out_s }} con-name MC_OUT_S
+        nmcli con mod MC_IN_P  ipv4.addresses {{ subnet_mc_in_p }}.{{ last_octet }}/24  ipv4.method manual ipv6.method disabled
+        nmcli con mod MC_IN_S  ipv4.addresses {{ subnet_mc_in_s }}.{{ last_octet }}/24  ipv4.method manual ipv6.method disabled
+        nmcli con mod MC_OUT_P ipv4.addresses {{ subnet_mc_out_p }}.{{ last_octet }}/24 ipv4.method manual ipv6.method disabled
+        nmcli con mod MC_OUT_S ipv4.addresses {{ subnet_mc_out_s }}.{{ last_octet }}/24 ipv4.method manual ipv6.method disabled
+        nmcli con up  MC_IN_P
+        nmcli con up  MC_IN_S
+        nmcli con up  MC_OUT_P
+        nmcli con up  MC_OUT_S
+      register: created_connections
+
+    - name: Debug the Created connections
+      debug:
+        msg: "Created connections: {{ created_connections.stdout_lines }}"
+
+    - name: Restart NetworkManager
+      service:
+        name: NetworkManager
+        state: restarted

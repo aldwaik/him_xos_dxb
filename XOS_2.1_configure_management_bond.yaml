@@ -1,0 +1,147 @@
+---
+- name: Configure XOS Management bond
+  hosts: all
+  become: yes
+  vars:
+    interface: "{{ 'eth0' if eth0_nmconnection.stat.exists else 'eno8303' }}"
+  tasks:
+    - name: Check current hostname
+      command: hostname
+      register: current_hostname
+
+    - name: Check hostname in file
+      command: cat /etc/hostname
+      register: file_hostname
+      failed_when: false
+
+    - name: Set the hostname from DHCP if different
+      shell: |
+        hostnamectl set-hostname $(hostname)
+      args:
+        executable: /bin/bash
+      when: current_hostname.stdout != file_hostname.stdout
+
+    - name: Check if eth0.nmconnection exists
+      stat:
+        path: /etc/NetworkManager/system-connections/eth0.nmconnection
+      register: eth0_nmconnection
+
+    - name: Check if eno8303.nmconnection exists
+      stat:
+        path: /etc/NetworkManager/system-connections/eno8303.nmconnection
+      register: eno8303_nmconnection
+
+    - name: Rename eth0.nmconnection to eno8303.nmconnection if eth0.nmconnection exists and eno8303.nmconnection does not exist
+      shell: |
+        mv /etc/NetworkManager/system-connections/eth0.nmconnection /etc/NetworkManager/system-connections/eno8303.nmconnection
+      when: eth0_nmconnection.stat.exists and not eno8303_nmconnection.stat.exists
+
+    - name: Fail if both eth0.nmconnection and eno8303.nmconnection exist
+      fail:
+        msg: "Both eth0.nmconnection and eno8303.nmconnection exist. Manual intervention required."
+      when: eth0_nmconnection.stat.exists and eno8303_nmconnection.stat.exists
+
+    - name: Re-register if eno8303.nmconnection exists after renaming
+      stat:
+        path: /etc/NetworkManager/system-connections/eno8303.nmconnection
+      register: eno8303_nmconnection
+
+    - name: Ensure eno8303.nmconnection config is correct
+      block:
+        - name: Set ID and interface-name to eno8303
+          lineinfile:
+            path: /etc/NetworkManager/system-connections/eno8303.nmconnection
+            regexp: '^(id|interface-name)=.*'
+            line: '\1=eno8303'
+            backrefs: yes
+        - name: Replace any occurrence of eth0 with eno8303 inside eno8303.nmconnection
+          replace:
+            path: /etc/NetworkManager/system-connections/eno8303.nmconnection
+            regexp: 'eth0'
+            replace: 'eno8303'
+        - name: Remove org.freedesktop.NetworkManager.origin line
+          ansible.builtin.lineinfile:
+            path: /etc/NetworkManager/system-connections/eno8303.nmconnection
+            regexp: '^org.freedesktop.NetworkManager.origin='
+            state: absent
+        - name: Remove [user] section header
+          ansible.builtin.lineinfile:
+            path: /etc/NetworkManager/system-connections/eno8303.nmconnection
+            regexp: '^\[user\]'
+            state: absent
+      when: eno8303_nmconnection.stat.exists
+
+    - name: Set the interface variable
+      set_fact:
+        interface: "{{ 'eth0' if eth0_nmconnection.stat.exists else 'eno8303' }}"
+
+    - name: Get the IP, Gateway, DNS, Domain, and Searches
+      shell: |
+        ip_addr=$(nmcli -t -f IP4.ADDRESS dev show | grep 10.17 | cut -d: -f2)
+        gw=$(nmcli -t -f IP4.GATEWAY dev show {{ interface }} | cut -d: -f2)
+        dns=$(nmcli -t -f IP4.DNS dev show {{ interface }} | cut -d: -f2)
+        domain=$(nmcli -t -f IP4.DOMAIN dev show {{ interface }} | cut -d: -f2)
+        searches=$(nmcli -t -f IP4.SEARCHES dev show {{ interface }} | cut -d: -f2)
+        # echo -e "IP_ADDR=$ip_addr\nGW=$gw\nDNS=$dns\nDOMAIN=$domain\nSEARCHES=$searches"
+        echo -e "IP_ADDR=$ip_addr"
+      register: network_info
+
+    - name: Debug network info output
+      debug:
+        var: network_info.stdout_lines
+
+    - name: Set variables from the network info
+      set_fact:
+        ip_addr: "{{ network_info.stdout_lines[0].split('=')[1] | default('') | replace('/32', '/24') }}"
+        gw: "{{ '10.17.11.254' if network_info.stdout_lines[0].split('=')[1].startswith('10.17.11') else '10.17.12.254' }}"
+        dns: "{{ '10.17.11.240' if network_info.stdout_lines[0].split('=')[1].startswith('10.17.11') else '10.17.12.240' }}"
+        # gw: "10.17.11.254"
+        # dns: "10.17.11.240"
+        domain: "alrawabi.local"
+
+    - name: Fail if any network variable is empty
+      fail:
+        msg: "One or more network variables are empty. Please check the network configuration."
+      when: ip_addr == '' or gw == '' or dns == '' or domain == ''
+
+    - name: Restart NetworkManager service
+      systemd:
+        name: NetworkManager
+        state: restarted
+
+    - name: Check if bond-mgmt exists
+      shell: |
+        nmcli dev status | grep bond-mgmt
+      register: bond_mgmt_check
+      failed_when: bond_mgmt_check.rc != 0 and bond_mgmt_check.stdout != ""
+
+    - name: Create bond-mgmt if not exists
+      shell: |
+        nmcli con del "Wired connection 1"
+        nmcli con show | grep -q eno12399 && nmcli con del eno12399
+        nmcli con add type bond connection.id bond-mgmt ifname bond-mgmt mode active-backup
+        nmcli con add type ethernet slave-type bond connection.id bond-mgmt-interface-1 ifname eno8303 master bond-mgmt
+        nmcli con add type ethernet slave-type bond connection.id bond-mgmt-interface-2 ifname eno12399 master bond-mgmt
+      when: bond_mgmt_check.rc != 0 and bond_mgmt_check.stdout == ""
+      args:
+        executable: /bin/bash
+
+    - name: Configure bond-mgmt
+      shell: |
+        nmcli con mod eno8303 ipv4.method disabled ipv6.method disabled ipv4.dhcp-timeout 0 ipv6.dhcp-timeout 0 ipv6.addr-gen-mode eui64 ipv4.dhcp-vendor-class-identifier ''
+        nmcli con mod bond-mgmt bond.options "primary=eno8303,mode=active-backup,miimon=100,updelay=100"
+        nmcli con mod bond-mgmt ipv4.addresses "{{ ip_addr }}"
+        nmcli con mod bond-mgmt ipv4.gateway "{{ gw }}"
+        nmcli con mod bond-mgmt ipv4.dns "{{ dns }}"
+        nmcli con mod bond-mgmt ipv4.dns-search "{{ domain }}"
+        nmcli con mod bond-mgmt ipv4.method manual
+        nmcli con mod bond-mgmt connection.autoconnect yes
+        nmcli con mod bond-mgmt ipv6.method disabled
+        nmcli con up bond-mgmt
+      args:
+        executable: /bin/bash
+
+    - name: Restart NetworkManager service (second time)
+      systemd:
+        name: NetworkManager
+        state: restarted
