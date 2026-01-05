@@ -203,8 +203,6 @@
     - name: Disable IP on slave profiles
       command: >
         nmcli con mod {{ item }}
-        ipv4.method disabled
-        ipv6.method disabled
         connection.autoconnect yes
       loop:
         - "{{ slave1_con }}"
