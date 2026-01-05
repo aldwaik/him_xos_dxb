@@ -20,6 +20,32 @@
 
   tasks:
     # --------------------------
+    # Capture current IP before any changes
+    # --------------------------
+    - name: Read IPv4 address from eno1 BEFORE cleanup (preserve connectivity)
+      command: "nmcli -g IP4.ADDRESS dev show {{ slave1_if }}"
+      register: eno1_ip_raw_initial
+      changed_when: false
+      failed_when: false
+
+    - name: Extract IP address (CIDR format)
+      set_fact:
+        captured_ip_addr: >-
+          {{
+            (eno1_ip_raw_initial.stdout_lines | default([]) | select('match','.+/.+') | list | first)
+            | default('')
+          }}
+
+    - name: Debug captured IP from eno1
+      debug:
+        msg: "Captured IP from {{ slave1_if }}: {{ captured_ip_addr }}"
+
+    - name: Fail if eno1 has no IP address
+      fail:
+        msg: "No IPv4 address found on {{ slave1_if }}. Cannot proceed safely."
+      when: captured_ip_addr == ""
+
+    # --------------------------
     # Cleanup orphaned connections
     # --------------------------
     - name: Get all NetworkManager connections
@@ -42,21 +68,6 @@
         - "System ens4f1"
       when: item in all_connections.stdout_lines
       failed_when: false
-
-    - name: Disconnect any stale interfaces before recreating connections
-      command: "nmcli dev disconnect {{ item }}"
-      loop:
-        - "eno1"
-        - "eno2"
-        - "eno3"
-        - "eno4"
-        - "ens3f0"
-        - "ens3f1"
-        - "ens4f0"
-        - "ens4f1"
-      register: disconnect_result
-      failed_when: false
-      changed_when: "'successfully' in disconnect_result.stderr or 'successfully' in disconnect_result.stdout"
 
     # --------------------------
     # Hostname reconciliation
@@ -139,47 +150,37 @@
 
     # --------------------------
     # Read IPv4 (idempotent):
-    # Prefer bond IP if already configured, else read from eno1
+    # Already captured before cleanup, but check bond if already exists
     # --------------------------
-    - name: Read IPv4 address (with prefix) from bond (if present)
+    - name: Read IPv4 address from bond if it already exists
       command: "nmcli -g IP4.ADDRESS dev show {{ bond_name }}"
       register: bond_ip_raw
       changed_when: false
       failed_when: false
 
-    - name: Read IPv4 address (with prefix) from eno1 (fallback)
-      command: "nmcli -g IP4.ADDRESS dev show {{ slave1_if }}"
-      register: eno1_ip_raw
-      changed_when: false
-      failed_when: false
-
-    - name: Choose management IP (bond first, else eno1)
+    - name: Use bond IP if available, otherwise use captured IP from eno1
       set_fact:
         ip_addr: >-
           {{
             (
               (bond_ip_raw.stdout_lines | default([]) | select('match','.+/.+') | list | first)
-              | default(
-                  (eno1_ip_raw.stdout_lines | default([]) | select('match','.+/.+') | list | first),
-                  true
-                )
+              | default(captured_ip_addr, true)
             )
             | default('')
           }}
 
-    - name: Debug IP selection
+    - name: Debug final IP selection
       debug:
         msg:
-          - "Raw bond IP output: {{ bond_ip_raw.stdout_lines | default([]) }}"
-          - "Raw eno1 IP output : {{ eno1_ip_raw.stdout_lines | default([]) }}"
-          - "Selected IP for bond-mgmt: {{ ip_addr }}"
+          - "Bond IP output (if exists): {{ bond_ip_raw.stdout_lines | default([]) }}"
+          - "Captured IP from eno1: {{ captured_ip_addr }}"
+          - "Final IP for bond-mgmt: {{ ip_addr }}"
 
-    - name: Fail if neither bond nor eno1 has IPv4 address
+    - name: Fail if no IP address available
       fail:
         msg: >-
-          No IPv4 address found on {{ bond_name }} or {{ slave1_if }}.
-          bond raw={{ bond_ip_raw.stdout_lines | default([]) }},
-          eno1 raw={{ eno1_ip_raw.stdout_lines | default([]) }}
+          No IPv4 address found. Bond IP={{ bond_ip_raw.stdout_lines | default([]) }},
+          Captured eno1 IP={{ captured_ip_addr }}
       when: ip_addr == ""
 
     # --------------------------
