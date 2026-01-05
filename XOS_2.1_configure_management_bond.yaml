@@ -3,7 +3,7 @@
   hosts: all
   become: yes
   vars:
-    interface: "{{ 'eth0' if eth0_nmconnection.stat.exists else 'eno8303' }}"
+    interface: "{{ 'eth0' if eth0_nmconnection.stat.exists else 'eno1' }}"
   tasks:
     - name: Check current hostname
       command: hostname
@@ -26,58 +26,58 @@
         path: /etc/NetworkManager/system-connections/eth0.nmconnection
       register: eth0_nmconnection
 
-    - name: Check if eno8303.nmconnection exists
+    - name: Check if eno1.nmconnection exists
       stat:
-        path: /etc/NetworkManager/system-connections/eno8303.nmconnection
-      register: eno8303_nmconnection
+        path: /etc/NetworkManager/system-connections/eno1.nmconnection
+      register: eno1_nmconnection
 
-    - name: Rename eth0.nmconnection to eno8303.nmconnection if eth0.nmconnection exists and eno8303.nmconnection does not exist
+    - name: Rename eth0.nmconnection to eno1.nmconnection if eth0.nmconnection exists and eno1.nmconnection does not exist
       shell: |
-        mv /etc/NetworkManager/system-connections/eth0.nmconnection /etc/NetworkManager/system-connections/eno8303.nmconnection
-      when: eth0_nmconnection.stat.exists and not eno8303_nmconnection.stat.exists
+        mv /etc/NetworkManager/system-connections/eth0.nmconnection /etc/NetworkManager/system-connections/eno1.nmconnection
+      when: eth0_nmconnection.stat.exists and not eno1_nmconnection.stat.exists
 
-    - name: Fail if both eth0.nmconnection and eno8303.nmconnection exist
+    - name: Fail if both eth0.nmconnection and eno1.nmconnection exist
       fail:
-        msg: "Both eth0.nmconnection and eno8303.nmconnection exist. Manual intervention required."
-      when: eth0_nmconnection.stat.exists and eno8303_nmconnection.stat.exists
+        msg: "Both eth0.nmconnection and eno1.nmconnection exist. Manual intervention required."
+      when: eth0_nmconnection.stat.exists and eno1_nmconnection.stat.exists
 
-    - name: Re-register if eno8303.nmconnection exists after renaming
+    - name: Re-register if eno1.nmconnection exists after renaming
       stat:
-        path: /etc/NetworkManager/system-connections/eno8303.nmconnection
-      register: eno8303_nmconnection
+        path: /etc/NetworkManager/system-connections/eno1.nmconnection
+      register: eno1_nmconnection
 
-    - name: Ensure eno8303.nmconnection config is correct
+    - name: Ensure eno1.nmconnection config is correct
       block:
-        - name: Set ID and interface-name to eno8303
+        - name: Set ID and interface-name to eno1
           lineinfile:
-            path: /etc/NetworkManager/system-connections/eno8303.nmconnection
+            path: /etc/NetworkManager/system-connections/eno1.nmconnection
             regexp: '^(id|interface-name)=.*'
-            line: '\1=eno8303'
+            line: '\1=eno1'
             backrefs: yes
-        - name: Replace any occurrence of eth0 with eno8303 inside eno8303.nmconnection
+        - name: Replace any occurrence of eth0 with eno1 inside eno1.nmconnection
           replace:
-            path: /etc/NetworkManager/system-connections/eno8303.nmconnection
+            path: /etc/NetworkManager/system-connections/eno1.nmconnection
             regexp: 'eth0'
-            replace: 'eno8303'
+            replace: 'eno1'
         - name: Remove org.freedesktop.NetworkManager.origin line
           ansible.builtin.lineinfile:
-            path: /etc/NetworkManager/system-connections/eno8303.nmconnection
+            path: /etc/NetworkManager/system-connections/eno1.nmconnection
             regexp: '^org.freedesktop.NetworkManager.origin='
             state: absent
         - name: Remove [user] section header
           ansible.builtin.lineinfile:
-            path: /etc/NetworkManager/system-connections/eno8303.nmconnection
+            path: /etc/NetworkManager/system-connections/eno1.nmconnection
             regexp: '^\[user\]'
             state: absent
-      when: eno8303_nmconnection.stat.exists
+      when: eno1_nmconnection.stat.exists
 
     - name: Set the interface variable
       set_fact:
-        interface: "{{ 'eth0' if eth0_nmconnection.stat.exists else 'eno8303' }}"
+        interface: "{{ 'eth0' if eth0_nmconnection.stat.exists else 'eno1' }}"
 
     - name: Get the IP, Gateway, DNS, Domain, and Searches
       shell: |
-        ip_addr=$(nmcli -t -f IP4.ADDRESS dev show | grep 10.17 | cut -d: -f2)
+        ip_addr=$(nmcli -t -f IP4.ADDRESS dev show | grep 10.11 | cut -d: -f2)
         gw=$(nmcli -t -f IP4.GATEWAY dev show {{ interface }} | cut -d: -f2)
         dns=$(nmcli -t -f IP4.DNS dev show {{ interface }} | cut -d: -f2)
         domain=$(nmcli -t -f IP4.DOMAIN dev show {{ interface }} | cut -d: -f2)
@@ -93,10 +93,8 @@
     - name: Set variables from the network info
       set_fact:
         ip_addr: "{{ network_info.stdout_lines[0].split('=')[1] | default('') | replace('/32', '/24') }}"
-        gw: "{{ '10.17.11.254' if network_info.stdout_lines[0].split('=')[1].startswith('10.17.11') else '10.17.12.254' }}"
-        dns: "{{ '10.17.11.240' if network_info.stdout_lines[0].split('=')[1].startswith('10.17.11') else '10.17.12.240' }}"
-        # gw: "10.17.11.254"
-        # dns: "10.17.11.240"
+        gw: "10.11.15.254"
+        dns: "10.15.10.1"
         domain: "alrawabi.local"
 
     - name: Fail if any network variable is empty
@@ -118,18 +116,18 @@
     - name: Create bond-mgmt if not exists
       shell: |
         nmcli con del "Wired connection 1"
-        nmcli con show | grep -q eno12399 && nmcli con del eno12399
+        nmcli con show | grep -q eno1 && nmcli con del eno2
         nmcli con add type bond connection.id bond-mgmt ifname bond-mgmt mode active-backup
-        nmcli con add type ethernet slave-type bond connection.id bond-mgmt-interface-1 ifname eno8303 master bond-mgmt
-        nmcli con add type ethernet slave-type bond connection.id bond-mgmt-interface-2 ifname eno12399 master bond-mgmt
+        nmcli con add type ethernet slave-type bond connection.id bond-mgmt-interface-1 ifname eno1 master bond-mgmt
+        nmcli con add type ethernet slave-type bond connection.id bond-mgmt-interface-2 ifname eno2 master bond-mgmt
       when: bond_mgmt_check.rc != 0 and bond_mgmt_check.stdout == ""
       args:
         executable: /bin/bash
 
     - name: Configure bond-mgmt
       shell: |
-        nmcli con mod eno8303 ipv4.method disabled ipv6.method disabled ipv4.dhcp-timeout 0 ipv6.dhcp-timeout 0 ipv6.addr-gen-mode eui64 ipv4.dhcp-vendor-class-identifier ''
-        nmcli con mod bond-mgmt bond.options "primary=eno8303,mode=active-backup,miimon=100,updelay=100"
+        nmcli con mod eno1 ipv4.method disabled ipv6.method disabled ipv4.dhcp-timeout 0 ipv6.dhcp-timeout 0 ipv6.addr-gen-mode eui64 ipv4.dhcp-vendor-class-identifier ''
+        nmcli con mod bond-mgmt bond.options "primary=eno1,mode=active-backup,miimon=100,updelay=100"
         nmcli con mod bond-mgmt ipv4.addresses "{{ ip_addr }}"
         nmcli con mod bond-mgmt ipv4.gateway "{{ gw }}"
         nmcli con mod bond-mgmt ipv4.dns "{{ dns }}"

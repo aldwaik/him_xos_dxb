@@ -1,38 +1,6 @@
 - name: Add user 'engineer' to sudoers using su with expect
   hosts: all
   tasks:
-    - name: Check if the script already exists
-      ansible.builtin.stat:
-        path: /tmp/add_engineer_to_sudoers.sh
-      register: script_stat
-
-    - name: Create the script to add engineer to sudoers if it does not exist
-      ansible.builtin.copy:
-        dest: /tmp/add_engineer_to_sudoers.sh
-        content: |
-          #!/bin/bash
-
-          # Check if the line already exists
-          grep -q "^engineer ALL=(ALL) NOPASSWD: ALL" /etc/sudoers
-          if [ $? -ne 0 ]; then
-            echo "" >> /etc/sudoers
-            echo "# Allow engineer user to run any commands as any user" >> /etc/sudoers
-            echo "engineer ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-          fi
-        mode: '0755'
-      when: not script_stat.stat.exists
-
-    - name: Check if engineer is already in sudoers
-      shell: |
-        grep -q '^engineer ALL=(ALL) NOPASSWD: ALL' /etc/sudoers
-      register: sudoers_check
-      ignore_errors: true
-
-    - name: Run the script
-      shell: |
-        . /tmp/add_engineer_to_sudoers.sh
-      when: sudoers_check.rc != 0
-
     - name: Enable and start cockpit.socket
       ansible.builtin.systemd:
         name: cockpit.socket
