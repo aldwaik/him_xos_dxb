@@ -34,4 +34,3 @@
         create: true
         mode: '0440'
         validate: /usr/sbin/visudo -cf %s
-      notify: Verify sudoers syntax

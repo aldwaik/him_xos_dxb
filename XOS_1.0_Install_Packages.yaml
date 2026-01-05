@@ -1,0 +1,95 @@
+---
+- name: Configure repositories and install required packages with Docker
+  hosts: all
+  become: true
+  gather_facts: true
+  
+  vars:
+    required_packages:
+      - dnf-utils
+      - net-tools
+      - zip
+      - unzip
+      - ftp
+      - wget
+      - git
+      - xauth
+      - xterm
+      - nfs-utils
+      - epel-release
+      - tcpdump
+      - chrony
+      - rsyslog
+      - python3
+      - htop
+      - glances
+      - nmon
+    
+    docker_packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+  
+  tasks:
+    - name: Install EPEL release repository
+      ansible.builtin.dnf:
+        name: epel-release
+        state: present
+      register: epel_install
+      retries: 3
+      delay: 10
+      until: epel_install is succeeded
+
+    - name: Check if Docker CE repository exists
+      ansible.builtin.stat:
+        path: /etc/yum.repos.d/docker-ce.repo
+      register: docker_repo_file
+
+    - name: Add Docker CE repository
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker-ce.repo
+        owner: root
+        group: root
+        mode: '0644'
+      when: not docker_repo_file.stat.exists
+      register: docker_repo_added
+      retries: 3
+      delay: 10
+      until: docker_repo_added is succeeded
+
+    - name: Install required system packages
+      ansible.builtin.dnf:
+        name: "{{ required_packages }}"
+        state: present
+        update_cache: true
+      register: packages_install
+      retries: 3
+      delay: 10
+      until: packages_install is succeeded
+
+    - name: Install Docker packages
+      ansible.builtin.dnf:
+        name: "{{ docker_packages }}"
+        state: present
+      register: docker_install
+      retries: 3
+      delay: 10
+      until: docker_install is succeeded
+
+    - name: Enable and start Docker service
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Verify Docker installation
+      ansible.builtin.command:
+        cmd: docker --version
+      changed_when: false
+      register: docker_version
+
+    - name: Display Docker version
+      ansible.builtin.debug:
+        msg: "Docker installed: {{ docker_version.stdout }}"
