@@ -12,8 +12,6 @@
     slave1_if: "eno1"
     slave2_if: "eno2"
 
-    # ---- IP Policy ----
-    # IP is read dynamically: bond first (if already configured), else eno1
     gw: "10.11.15.254"
     dns: "10.15.10.1"
     dns_search: "dsc.local"
@@ -49,11 +47,6 @@
         owner: root
         group: root
         mode: '0644'
-      when: runtime_hostname.stdout | trim != file_hostname.stdout | default('') | trim
-
-    - name: Ensure system hostname matches runtime hostname
-      ansible.builtin.hostname:
-        name: "{{ runtime_hostname.stdout | trim }}"
       when: runtime_hostname.stdout | trim != file_hostname.stdout | default('') | trim
 
     # --------------------------
@@ -107,7 +100,7 @@
 
     # --------------------------
     # Read IPv4 (idempotent):
-    # Prefer bond IP if bond already configured, else read from eno1
+    # Prefer bond IP if already configured, else read from eno1
     # --------------------------
     - name: Read IPv4 address (with prefix) from bond (if present)
       command: "nmcli -g IP4.ADDRESS dev show {{ bond_name }}"
@@ -197,16 +190,38 @@
         master {{ bond_name }}
       when: not slave2_exists
 
+    - name: Debug connection types (bond + slaves)
+      command: "nmcli -t -f NAME,TYPE,DEVICE con show"
+      register: con_show_all
+      changed_when: false
+
+    - name: Print connection types (filtered)
+      debug:
+        msg: "{{ con_show_all.stdout_lines | select('search', '^(bond-mgmt|bond-mgmt-interface)') | list }}"
+
     # --------------------------
     # Enforce desired config (idempotent)
     # --------------------------
-    - name: Disable IP on slave profiles
+    - name: Ensure slave connections are enslaved to the bond (idempotent)
+      command: >
+        nmcli con mod {{ item.con }}
+        connection.master {{ bond_name }}
+        connection.slave-type bond
+        connection.autoconnect yes
+      loop:
+        - { con: "{{ slave1_con }}", if: "{{ slave1_if }}" }
+        - { con: "{{ slave2_con }}", if: "{{ slave2_if }}" }
+
+    - name: Remove any IPv4/IPv6 settings from slaves (safe if none exist)
       command: >
         nmcli con mod {{ item }}
-        connection.autoconnect yes
+        -ipv4.addresses -ipv4.gateway -ipv4.dns -ipv4.dns-search -ipv4.method
+        -ipv6.addresses -ipv6.gateway -ipv6.dns -ipv6.dns-search -ipv6.method
       loop:
         - "{{ slave1_con }}"
         - "{{ slave2_con }}"
+      register: strip_ip_from_slaves
+      failed_when: false
 
     - name: Configure bond options + IPv4 on bond
       command: >
