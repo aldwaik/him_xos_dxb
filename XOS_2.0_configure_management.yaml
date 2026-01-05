@@ -13,7 +13,7 @@
     slave2_if: "eno2"
 
     # ---- IP Policy ----
-    # IP is read from eno1 at runtime
+    # IP is read dynamically: bond first (if already configured), else eno1
     gw: "10.11.15.254"
     dns: "10.15.10.1"
     dns_search: "dsc.local"
@@ -106,26 +106,48 @@
         var: network_info.stdout_lines
 
     # --------------------------
-    # Read IPv4 from eno1
+    # Read IPv4 (idempotent):
+    # Prefer bond IP if bond already configured, else read from eno1
     # --------------------------
-    - name: Read IPv4 address (with prefix) from eno1
+    - name: Read IPv4 address (with prefix) from bond (if present)
+      command: "nmcli -g IP4.ADDRESS dev show {{ bond_name }}"
+      register: bond_ip_raw
+      changed_when: false
+      failed_when: false
+
+    - name: Read IPv4 address (with prefix) from eno1 (fallback)
       command: "nmcli -g IP4.ADDRESS dev show {{ slave1_if }}"
       register: eno1_ip_raw
       changed_when: false
+      failed_when: false
 
-    - name: Pick first IPv4 address from eno1
+    - name: Choose management IP (bond first, else eno1)
       set_fact:
-        ip_addr: "{{ (eno1_ip_raw.stdout_lines | select('match','.+/.+') | list | first) | default('') }}"
+        ip_addr: >-
+          {{
+            (
+              (bond_ip_raw.stdout_lines | default([]) | select('match','.+/.+') | list | first)
+              | default(
+                  (eno1_ip_raw.stdout_lines | default([]) | select('match','.+/.+') | list | first),
+                  true
+                )
+            )
+            | default('')
+          }}
 
-    - name: Debug IP extracted from eno1
+    - name: Debug IP selection
       debug:
         msg:
-          - "Raw IP output from nmcli: {{ eno1_ip_raw.stdout_lines }}"
-          - "Selected IP for bond    : {{ ip_addr }}"
+          - "Raw bond IP output: {{ bond_ip_raw.stdout_lines | default([]) }}"
+          - "Raw eno1 IP output : {{ eno1_ip_raw.stdout_lines | default([]) }}"
+          - "Selected IP for bond-mgmt: {{ ip_addr }}"
 
-    - name: Fail if eno1 has no IPv4 address
+    - name: Fail if neither bond nor eno1 has IPv4 address
       fail:
-        msg: "eno1 has no IPv4 address according to nmcli. Output: {{ eno1_ip_raw.stdout_lines }}"
+        msg: >-
+          No IPv4 address found on {{ bond_name }} or {{ slave1_if }}.
+          bond raw={{ bond_ip_raw.stdout_lines | default([]) }},
+          eno1 raw={{ eno1_ip_raw.stdout_lines | default([]) }}
       when: ip_addr == ""
 
     # --------------------------
