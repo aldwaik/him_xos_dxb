@@ -95,7 +95,7 @@
         ip_addr: "{{ network_info.stdout_lines[0].split('=')[1] | default('') | replace('/32', '/24') }}"
         gw: "10.11.15.254"
         dns: "10.15.10.1"
-        domain: "alrawabi.local"
+        domain: "dsc.local"
 
     - name: Fail if any network variable is empty
       fail:

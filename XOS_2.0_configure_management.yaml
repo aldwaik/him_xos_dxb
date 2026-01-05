@@ -1,0 +1,176 @@
+---
+- name: Configure XOS Management bond (bond-mgmt) + set static hostname
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # ---- Hostname policy ----
+    # Provide via inventory/group_vars or CLI: -e static_hostname=xos-001
+    static_hostname: "{{ static_hostname | default(omit) }}"
+
+    # ---- Bond/Interfaces ----
+    bond_name: "bond-mgmt"
+    slave1_con: "bond-mgmt-interface-1"
+    slave2_con: "bond-mgmt-interface-2"
+    slave1_if: "eno1"
+    slave2_if: "eno2"
+
+    # ---- IP Policy ----
+    # IP is read from eno1 at runtime
+    gw: "10.11.15.254"
+    dns: "10.15.10.1"
+    dns_search: "dsc.local"
+
+    bond_options: "mode=active-backup,primary=eno1,miimon=100,updelay=100"
+
+  tasks:
+    # --------------------------
+    # Hostname reconciliation
+    # --------------------------
+    - name: Get runtime hostname
+      command: hostname
+      register: runtime_hostname
+      changed_when: false
+
+    - name: Read /etc/hostname
+      command: cat /etc/hostname
+      register: file_hostname
+      changed_when: false
+      failed_when: false
+
+    - name: Update /etc/hostname to match runtime hostname if different
+      copy:
+        content: "{{ runtime_hostname.stdout | trim }}\n"
+        dest: /etc/hostname
+        owner: root
+        group: root
+        mode: '0644'
+      when: runtime_hostname.stdout | trim != file_hostname.stdout | trim
+
+    - name: Ensure system hostname matches runtime hostname
+      ansible.builtin.hostname:
+        name: "{{ runtime_hostname.stdout | trim }}"
+      when: runtime_hostname.stdout | trim != file_hostname.stdout | trim
+
+    # --------------------------
+    # Preconditions
+    # --------------------------
+    - name: Ensure nmcli exists
+      command: nmcli -v
+      register: nmcli_ver
+      changed_when: false
+
+    - name: Get NetworkManager devices
+      command: "nmcli -t -f DEVICE dev status"
+      register: nm_devs
+      changed_when: false
+
+    - name: Fail if eno1 or eno2 are missing
+      fail:
+        msg: "Required interfaces not found. Need eno1 and eno2. Found: {{ nm_devs.stdout_lines }}"
+      when: >
+        (slave1_if not in nm_devs.stdout_lines) or
+        (slave2_if not in nm_devs.stdout_lines)
+
+    # --------------------------
+    # Debug-only network_info
+    # (kept per your feedback)
+    # --------------------------
+    - name: Debug network info (device show for eno1)
+      command: "nmcli dev show {{ slave1_if }}"
+      register: network_info
+      changed_when: false
+
+    - name: Print network_info for debugging
+      debug:
+        var: network_info.stdout_lines
+
+    # --------------------------
+    # Read IPv4 from eno1
+    # --------------------------
+    - name: Read IPv4 address (with prefix) from eno1
+      command: "nmcli -g IP4.ADDRESS dev show {{ slave1_if }}"
+      register: eno1_ip_raw
+      changed_when: false
+
+    - name: Pick first IPv4 address from eno1
+      set_fact:
+        ip_addr: "{{ (eno1_ip_raw.stdout_lines | select('match','.+/.+') | list | first) | default('') }}"
+
+    - name: Fail if eno1 has no IPv4 address
+      fail:
+        msg: "eno1 has no IPv4 address according to nmcli. Output: {{ eno1_ip_raw.stdout_lines }}"
+      when: ip_addr == ""
+
+    # --------------------------
+    # Ensure bond + slaves exist
+    # --------------------------
+    - name: Get existing NM connection names
+      command: "nmcli -t -f NAME con show"
+      register: nm_con_names
+      changed_when: false
+
+    - name: Set existence flags
+      set_fact:
+        bond_exists: "{{ bond_name in nm_con_names.stdout_lines }}"
+        slave1_exists: "{{ slave1_con in nm_con_names.stdout_lines }}"
+        slave2_exists: "{{ slave2_con in nm_con_names.stdout_lines }}"
+
+    - name: Create bond connection if missing
+      command: >
+        nmcli con add type bond
+        con-name {{ bond_name }}
+        ifname {{ bond_name }}
+        mode active-backup
+      when: not bond_exists
+
+    - name: Create slave1 connection if missing (eno1 -> bond-mgmt-interface-1)
+      command: >
+        nmcli con add type ethernet
+        con-name {{ slave1_con }}
+        ifname {{ slave1_if }}
+        slave-type bond
+        master {{ bond_name }}
+      when: not slave1_exists
+
+    - name: Create slave2 connection if missing (eno2 -> bond-mgmt-interface-2)
+      command: >
+        nmcli con add type ethernet
+        con-name {{ slave2_con }}
+        ifname {{ slave2_if }}
+        slave-type bond
+        master {{ bond_name }}
+      when: not slave2_exists
+
+    # --------------------------
+    # Enforce desired config (idempotent)
+    # --------------------------
+    - name: Disable IP on slave profiles
+      command: >
+        nmcli con mod {{ item }}
+        ipv4.method disabled
+        ipv6.method disabled
+        connection.autoconnect yes
+      loop:
+        - "{{ slave1_con }}"
+        - "{{ slave2_con }}"
+
+    - name: Configure bond options + IPv4 on bond
+      command: >
+        nmcli con mod {{ bond_name }}
+        bond.options "{{ bond_options }}"
+        ipv4.addresses "{{ ip_addr }}"
+        ipv4.gateway "{{ gw }}"
+        ipv4.dns "{{ dns }}"
+        ipv4.dns-search "{{ dns_search }}"
+        ipv4.method manual
+        ipv6.method disabled
+        connection.autoconnect yes
+
+    - name: Reload NM connections
+      command: nmcli con reload
+      changed_when: false
+
+    - name: Bring up bond connection
+      command: "nmcli con up {{ bond_name }}"
