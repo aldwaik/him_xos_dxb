@@ -18,18 +18,14 @@
         name: mcelog.service
         enabled: false
         state: stopped
-      register: mcelog_status
-      changed_when: mcelog_status.changed
-      failed_when: mcelog_status.rc != 0 and 'Unit mcelog.service could not be found' not in mcelog_status.stderr
+      ignore_errors: true
 
     - name: Disable NetworkManager-wait-online service
       ansible.builtin.systemd:
         name: NetworkManager-wait-online.service
         enabled: false
         state: stopped
-      register: nm_wait_status
-      changed_when: nm_wait_status.changed
-      failed_when: nm_wait_status.rc != 0 and 'Unit NetworkManager-wait-online.service could not be found' not in nm_wait_status.stderr
+      ignore_errors: true
 
     - name: Configure engineer user for sudoers access
       ansible.builtin.lineinfile:
