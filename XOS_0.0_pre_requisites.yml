@@ -1,20 +1,41 @@
-- name: Enable Cockpit, disable mcelog and NetworkManager-wait-online
+---
+- name: Configure system prerequisites and user access
   hosts: all
+  become: true
+  gather_facts: true
+  
   tasks:
     - name: Enable and start cockpit.socket
       ansible.builtin.systemd:
         name: cockpit.socket
-        enabled: yes
+        enabled: true
         state: started
+      register: cockpit_status
+      changed_when: cockpit_status.changed
 
-    - name: Disable mcelog.service
-      systemd:
+    - name: Disable mcelog service
+      ansible.builtin.systemd:
         name: mcelog.service
-        enabled: no
+        enabled: false
         state: stopped
+      register: mcelog_status
+      changed_when: mcelog_status.changed
+      failed_when: mcelog_status.rc != 0 and 'Unit mcelog.service could not be found' not in mcelog_status.stderr
 
-    - name: Disable NetworkManager-wait-online.service
-      systemd:
+    - name: Disable NetworkManager-wait-online service
+      ansible.builtin.systemd:
         name: NetworkManager-wait-online.service
-        enabled: no
+        enabled: false
         state: stopped
+      register: nm_wait_status
+      changed_when: nm_wait_status.changed
+      failed_when: nm_wait_status.rc != 0 and 'Unit NetworkManager-wait-online.service could not be found' not in nm_wait_status.stderr
+
+    - name: Configure engineer user for sudoers access
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers.d/engineer
+        line: "engineer ALL=(ALL) ALL"
+        create: true
+        mode: '0440'
+        validate: /usr/sbin/visudo -cf %s
+      notify: Verify sudoers syntax
