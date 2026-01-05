@@ -20,6 +20,45 @@
 
   tasks:
     # --------------------------
+    # Cleanup orphaned connections
+    # --------------------------
+    - name: Get all NetworkManager connections
+      command: "nmcli -t -f NAME con show"
+      register: all_connections
+      changed_when: false
+
+    - name: Remove orphaned/stale connections
+      command: "nmcli con delete {{ item }}"
+      loop:
+        - "Wired connection 1"
+        - "Wired connection 2"
+        - "Ethernet connection 1"
+        - "System eth0"
+        - "System eno3"
+        - "System eno4"
+        - "System ens3f0"
+        - "System ens3f1"
+        - "System ens4f0"
+        - "System ens4f1"
+      when: item in all_connections.stdout_lines
+      failed_when: false
+
+    - name: Disconnect any stale interfaces before recreating connections
+      command: "nmcli dev disconnect {{ item }}"
+      loop:
+        - "eno1"
+        - "eno2"
+        - "eno3"
+        - "eno4"
+        - "ens3f0"
+        - "ens3f1"
+        - "ens4f0"
+        - "ens4f1"
+      register: disconnect_result
+      failed_when: false
+      changed_when: "'successfully' in disconnect_result.stderr or 'successfully' in disconnect_result.stdout"
+
+    # --------------------------
     # Hostname reconciliation
     # --------------------------
     - name: Get runtime hostname
