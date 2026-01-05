@@ -1,4 +1,4 @@
-- name: Add user 'engineer' to sudoers using su with expect
+- name: Enable Cockpit, disable mcelog and NetworkManager-wait-online
   hosts: all
   tasks:
     - name: Enable and start cockpit.socket
