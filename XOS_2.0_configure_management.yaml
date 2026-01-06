@@ -297,44 +297,59 @@
       register: all_connections
       changed_when: false
 
+    - name: Debug all connections before cleanup
+      debug:
+        var: all_connections.stdout_lines
+
+    - name: Build list of orphaned connection names to check (with and without "System " prefix)
+      set_fact:
+        orphaned_connection_names:
+          - "Wired connection 1"
+          - "Wired connection 2"
+          - "Ethernet connection 1"
+          - "eth0"
+          - "System eth0"
+          - "eno1"
+          - "System eno1"
+          - "eno2"
+          - "System eno2"
+          - "eno3"
+          - "System eno3"
+          - "eno4"
+          - "System eno4"
+          - "ens3f0"
+          - "System ens3f0"
+          - "ens3f1"
+          - "System ens3f1"
+          - "ens4f0"
+          - "System ens4f0"
+          - "ens4f1"
+          - "System ens4f1"
+
+    - name: Find orphaned connections that actually exist
+      set_fact:
+        connections_to_delete: "{{ orphaned_connection_names | select('in', all_connections.stdout_lines) | list }}"
+
+    - name: Debug connections to delete
+      debug:
+        msg: "Found {{ connections_to_delete | length }} orphaned connections to delete: {{ connections_to_delete }}"
+
     - name: Bring down orphaned connections before deletion (if active)
       command: "nmcli con down '{{ item }}'"
-      loop:
-        - "Wired connection 1"
-        - "Wired connection 2"
-        - "Ethernet connection 1"
-        - "eth0"
-        - "eno1"
-        - "eno2"
-        - "eno3"
-        - "eno4"
-        - "ens3f0"
-        - "ens3f1"
-        - "ens4f0"
-        - "ens4f1"
-      when: item in all_connections.stdout_lines
+      loop: "{{ connections_to_delete }}"
       failed_when: false
       changed_when: false
 
     - name: Remove orphaned/stale connections
       command: "nmcli con delete '{{ item }}'"
-      loop:
-        - "Wired connection 1"
-        - "Wired connection 2"
-        - "Ethernet connection 1"
-        - "eth0"
-        - "eno1"
-        - "eno2"
-        - "eno3"
-        - "eno4"
-        - "ens3f0"
-        - "ens3f1"
-        - "ens4f0"
-        - "ens4f1"
-      when: item in all_connections.stdout_lines
+      loop: "{{ connections_to_delete }}"
       failed_when: false
       register: delete_orphans
 
-    - name: Debug connections after connection deletion
+    - name: Debug deletion results
       debug:
-        var: delete_orphans.stdout_lines
+        msg:
+          - "Attempted to delete {{ connections_to_delete | length }} connections"
+          - "Connections: {{ connections_to_delete }}"
+          - "Results: {{ delete_orphans.results | default([]) | map(attribute='stdout', default='') | list }}"
+      when: connections_to_delete | length > 0
