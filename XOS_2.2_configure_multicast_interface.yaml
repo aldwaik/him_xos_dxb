@@ -1,9 +1,7 @@
 ---
 - name: Configure XOS multicast network interfaces
   hosts: all
-  become: true
-  gather_facts: true
-
+  become: yes
   vars:
     interface_mgmt: "bond-mgmt"
     interface_mc_in_p:    "ens3f0"
@@ -15,6 +13,8 @@
     subnet_mc_in_s:    "10.25.4.0/24"
     subnet_mc_out_p:   "10.25.3.0/24"
     subnet_mc_out_s:   "10.25.5.0/24"
+
+    last_octet: ""
 
     mc_connections:
       - name: "MC_IN_P"
@@ -34,7 +34,7 @@
     # --------------------------
     # Precondition checks
     # --------------------------
-    - name: Check if management interface exists
+    - name: Check if management interface is available
       command: ip link show {{ interface_mgmt }}
       register: mgmt_interface_check
       changed_when: false
@@ -45,63 +45,43 @@
         msg: "Management interface {{ interface_mgmt }} is not available."
       when: mgmt_interface_check.rc != 0
 
-    - name: Get management interface IP configuration
-      command: "nmcli -t -f IP4.ADDRESS,GENERAL.STATE device show {{ interface_mgmt }}"
+    - name: Check IP configuration of management interface
+      command: nmcli -t -f IP4.ADDRESS,GENERAL.STATE device show {{ interface_mgmt }}
       register: mgmt_ip_config
       changed_when: false
-      failed_when: false
 
-    - name: Debug management interface configuration output
-      debug:
-        var: mgmt_ip_config.stdout_lines
-
-    - name: Extract IP address lines from management interface
-      set_fact:
-        mgmt_ip_lines: >-
-          {{
-            mgmt_ip_config.stdout_lines | default([])
-            | select('match', '^IP4\\.ADDRESS') | list
-          }}
-        mgmt_ip_address: ""
-
-    - name: Debug extracted IP lines
-      debug:
-        var: mgmt_ip_lines
-
-    - name: Extract management interface IP address (when IP exists)
-      set_fact:
-        mgmt_ip_address: >-
-          {{
-            mgmt_ip_lines[0]
-            | regex_replace('^IP4\\.ADDRESS(\\[\\d+\\])?:', '') | regex_replace('/.*', '')
-          }}
-      when: (mgmt_ip_lines | default([]) | length) > 0
-
-    - name: Check if management interface is connected
-      set_fact:
-        mgmt_connected: "{{ 'GENERAL.STATE:100 (connected)' in mgmt_ip_config.stdout }}"
-
-    - name: Fail if management interface has no IP or is not connected
+    - name: Fail if management interface has no IP or is not UP
       fail:
-        msg: >-
-          Management interface {{ interface_mgmt }} has no IP address or is not connected.
-          IP: {{ mgmt_ip_address }}, Connected: {{ mgmt_connected }}
-      when: (mgmt_ip_address == "") or (not mgmt_connected | bool)
+        msg: "Management interface {{ interface_mgmt }} has no IP address or is not UP."
+      when: mgmt_ip_config.stdout | regex_search('IP4.ADDRESS[^\n]*') is not defined or mgmt_ip_config.stdout.find('GENERAL.STATE:100 (connected)') == -1
 
     - name: Extract last octet of management interface IP
       set_fact:
-        last_octet: "{{ mgmt_ip_address.split('.')[-1] }}"
+        last_octet: "{{ mgmt_ip_config.stdout | regex_search('IP4.ADDRESS[^\n]*') | regex_replace('.*\\.', '') | regex_replace('/.*', '') }}"
 
-    - name: Debug extracted last octet
+    - name: Print last octet
       debug:
         msg: "Last octet of management interface IP is {{ last_octet }}"
 
-    - name: Extract subnet base addresses (remove /24 suffix)
+    - name: Set encoder subnets
       set_fact:
-        subnet_mc_in_p_base: "{{ subnet_mc_in_p | regex_replace('/24$', '') | regex_replace('\\.0$', '') }}"
-        subnet_mc_in_s_base: "{{ subnet_mc_in_s | regex_replace('/24$', '') | regex_replace('\\.0$', '') }}"
-        subnet_mc_out_p_base: "{{ subnet_mc_out_p | regex_replace('/24$', '') | regex_replace('\\.0$', '') }}"
-        subnet_mc_out_s_base: "{{ subnet_mc_out_s | regex_replace('/24$', '') | regex_replace('\\.0$', '') }}"
+        subnet_mc_in_p: "{{ subnet_mc_in_p | regex_replace('.0/.*', '') }}"
+        subnet_mc_in_s: "{{ subnet_mc_in_s | regex_replace('.0/.*', '') }}"
+        subnet_mc_out_p: "{{ subnet_mc_out_p | regex_replace('.0/.*', '') }}"
+        subnet_mc_out_s: "{{ subnet_mc_out_s | regex_replace('.0/.*', '') }}"
+        mc_connections:
+          - name: "MC_IN_P"
+            interface: "{{ interface_mc_in_p }}"
+            subnet: "{{ subnet_mc_in_p }}"
+          - name: "MC_IN_S"
+            interface: "{{ interface_mc_in_s }}"
+            subnet: "{{ subnet_mc_in_s }}"
+          - name: "MC_OUT_P"
+            interface: "{{ interface_mc_out_p }}"
+            subnet: "{{ subnet_mc_out_p }}"
+          - name: "MC_OUT_S"
+            interface: "{{ interface_mc_out_s }}"
+            subnet: "{{ subnet_mc_out_s }}"
 
     - name: Check if multicast interfaces are available
       command: ip link show {{ item.interface }}
@@ -117,6 +97,11 @@
           {{ mc_interface_checks.results | selectattr('rc', 'ne', 0) | map(attribute='item.interface') | list }}
       when: mc_interface_checks.results | selectattr('rc', 'ne', 0) | list | length > 0
 
+    - name: Fail if encoder subnets are not set
+      fail:
+        msg: "Encoder subnets are not set."
+      when: subnet_mc_in_p is not defined or subnet_mc_in_s is not defined or subnet_mc_out_p is not defined or subnet_mc_out_s is not defined
+
     # --------------------------
     # Cleanup orphaned connections
     # --------------------------
@@ -129,10 +114,6 @@
       command: "nmcli -t -f NAME,DEVICE con show"
       register: connections_with_devices
       changed_when: false
-
-    - name: Debug all connections before cleanup
-      debug:
-        var: all_connections.stdout_lines
 
     - name: Find connections with no device (orphaned)
       set_fact:
@@ -150,7 +131,7 @@
             | select('match', '^(Wired connection|MC_|ens[0-9]|eth[0-9])') | list
           }}
 
-    - name: Combine orphaned connections (no device + matching patterns, exclude current MC connections)
+    - name: Combine orphaned connections (exclude current MC connections)
       set_fact:
         connections_to_delete: >-
           {{
@@ -221,7 +202,7 @@
     - name: Configure multicast connection IP addresses
       command: >
         nmcli con mod {{ item.name }}
-        ipv4.addresses "{{ item.subnet | regex_replace('/24$', '') | regex_replace('\\.0$', '') }}.{{ last_octet }}/24"
+        ipv4.addresses "{{ item.subnet }}.{{ last_octet }}/24"
         ipv4.method manual
         ipv6.method disabled
         connection.autoconnect yes
@@ -253,12 +234,3 @@
       loop: "{{ mc_ip_checks.results }}"
       loop_control:
         label: "{{ item.item.name }}"
-
-    - name: Get final connection status
-      command: "nmcli -t -f NAME,DEVICE,IP4.ADDRESS con show"
-      register: final_connections
-      changed_when: false
-
-    - name: Debug final multicast connections
-      debug:
-        msg: "{{ final_connections.stdout_lines | select('search', '^MC_') | list }}"
