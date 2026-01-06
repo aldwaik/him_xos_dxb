@@ -46,30 +46,6 @@
       when: captured_ip_addr == ""
 
     # --------------------------
-    # Cleanup orphaned connections
-    # --------------------------
-    - name: Get all NetworkManager connections
-      command: "nmcli -t -f NAME con show"
-      register: all_connections
-      changed_when: false
-
-    - name: Remove orphaned/stale connections
-      command: "nmcli con delete {{ item }}"
-      loop:
-        - "Wired connection 1"
-        - "Wired connection 2"
-        - "Ethernet connection 1"
-        - "System eth0"
-        - "System eno3"
-        - "System eno4"
-        - "System ens3f0"
-        - "System ens3f1"
-        - "System ens4f0"
-        - "System ens4f1"
-      when: item in all_connections.stdout_lines
-      failed_when: false
-
-    # --------------------------
     # Hostname reconciliation
     # --------------------------
     - name: Get runtime hostname
@@ -313,13 +289,29 @@
       debug:
         var: nm_con_names_post.stdout_lines
 
-    - name: Delete legacy 'eno1' connection if it still exists and is not our slave profile
-      command: nmcli con delete eno1
-      when: >-
-        ('eno1' in nm_con_names_post.stdout_lines)
-      failed_when: false
-      register: delete_eno1_result
+    # --------------------------
+    # Cleanup orphaned connections
+    # --------------------------
+    - name: Get all NetworkManager connections
+      command: "nmcli -t -f NAME con show"
+      register: all_connections
+      changed_when: false
 
-    - name: Report deletion result for eno1
-      debug:
-        msg: "Deleted eno1 connection: {{ delete_eno1_result.stdout | default('no-op') }}"
+    - name: Remove orphaned/stale connections
+      command: "nmcli con delete {{ item }}"
+      loop:
+        - "Wired connection 1"
+        - "Wired connection 2"
+        - "Ethernet connection 1"
+        - "System eth0"
+        - "System eno1"
+        - "System eno2"
+        - "System eno3"
+        - "System eno4"
+        - "System ens3f0"
+        - "System ens3f1"
+        - "System ens4f0"
+        - "System ens4f1"
+      when: item in all_connections.stdout_lines
+      failed_when: false
+      register: delete_orphans
