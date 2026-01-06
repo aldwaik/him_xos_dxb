@@ -51,15 +51,29 @@
       changed_when: false
       failed_when: false
 
+    - name: Debug management interface configuration output
+      debug:
+        var: mgmt_ip_config.stdout_lines
+
+    - name: Extract IP address lines from management interface
+      set_fact:
+        mgmt_ip_lines: >-
+          {{
+            mgmt_ip_config.stdout_lines | default([])
+            | select('match', '^IP4\\.ADDRESS') | list
+          }}
+
+    - name: Debug extracted IP lines
+      debug:
+        var: mgmt_ip_lines
+
     - name: Extract management interface IP address
       set_fact:
         mgmt_ip_address: >-
           {{
-            (mgmt_ip_config.stdout_lines | default([])
-            | select('match', '^IP4\\.ADDRESS.*:.*/') | list | length > 0)
+            (mgmt_ip_lines | default([]) | length > 0)
             | ternary(
-                (mgmt_ip_config.stdout_lines | default([])
-                | select('match', '^IP4\\.ADDRESS.*:.*/') | list | first
+                (mgmt_ip_lines[0]
                 | regex_replace('^IP4\\.ADDRESS(\\[\\d+\\])?:', '') | regex_replace('/.*', '')),
                 ''
               )
