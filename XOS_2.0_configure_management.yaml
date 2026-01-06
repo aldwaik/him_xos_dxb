@@ -291,3 +291,36 @@
 
     - name: Bring up bond connection
       command: "nmcli con up {{ bond_name }}"
+
+    - name: Wait for bond to obtain IPv4 address
+      command: nmcli -g IP4.ADDRESS dev show {{ bond_name }}
+      register: bond_ip_check
+      retries: 8
+      delay: 5
+      until: bond_ip_check.stdout is search('.+/.+')
+      failed_when: false
+
+    - name: Debug bond IP after bring up
+      debug:
+        msg: "Bond IP: {{ bond_ip_check.stdout | default('') }}"
+
+    - name: Refresh NM connection list
+      command: "nmcli -t -f NAME con show"
+      register: nm_con_names_post
+      changed_when: false
+
+    - name: Debug connections after bond bring-up
+      debug:
+        var: nm_con_names_post.stdout_lines
+
+    - name: Delete legacy 'eno1' connection if it still exists and is not our slave profile
+      command: nmcli con delete eno1
+      when: >-
+        ('eno1' in nm_con_names_post.stdout_lines) and
+        (slave1_con not in nm_con_names_post.stdout_lines)
+      failed_when: false
+      register: delete_eno1_result
+
+    - name: Report deletion result for eno1
+      debug:
+        msg: "Deleted eno1 connection: {{ delete_eno1_result.stdout | default('no-op') }}"
