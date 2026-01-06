@@ -2,7 +2,7 @@ DHCP
 * Open OPNSense https://10.15.16.151/ui/kea/dhcp/v4
 * Add an entry for mac address of eno1 of the XOS server
 * Apply
-* Syncronize to backup (https://10.15.16.151/status_habackup.php)
+* Synchronize to backup (https://10.15.16.151/status_habackup.php)
 
 PXE
 * login to iDrac of the server.
@@ -23,7 +23,7 @@ HIM - Enable cockpit:
 * * XOS_1.0_init_Install_Packages
 
 Software upgrade
-* Login to cockpit (port 9090) using engineer passwork
+* Login to cockpit (port 9090) using engineer password
 * Update software and reboot
 
 HIM - XOS Install
@@ -31,3 +31,6 @@ HIM - XOS Install
 * * XOS_2.0_configure_management
 * * XOS_2.2_configure_multicast_interface
 * * XOS 3.0 - Install RPM | 1.24.0.0.77
+* * XOS_3.3_delete_license_file_vos
+
+if web gui for XOS didn't initiate properly, reboot the server
