@@ -4,25 +4,16 @@
   become: yes
   vars:
     interface_mgmt: "bond-mgmt"
-    primary_encoder_interface_mc_in_p:    "ens1f0"
-    primary_encoder_interface_mc_in_s:    "ens2f0"
-    primary_encoder_interface_mc_out_p:   "ens1f1"
-    primary_encoder_interface_mc_out_s:   "ens2f1"
+    interface_mc_in_p:    "ens3f0"
+    interface_mc_in_s:    "ens4f0"
+    interface_mc_out_p:   "ens3f1"
+    interface_mc_out_s:   "ens4f1"
 
-    secondary_encoder_interface_mc_in_p:  "ens1f0"
-    secondary_encoder_interface_mc_in_s:  "ens2f0"
-    secondary_encoder_interface_mc_out_p: "ens1f1"
-    secondary_encoder_interface_mc_out_s: "ens2f1"
+    subnet_mc_in_p:    "10.25.1.0/24"
+    subnet_mc_in_s:    "10.25.4.0/24"
+    subnet_mc_out_p:   "10.25.3.0/24"
+    subnet_mc_out_s:   "10.25.5.0/24"
 
-    primary_encoder_subnet_mc_in_p:    "10.70.5.0/24"
-    primary_encoder_subnet_mc_in_s:    "10.80.5.0/24"
-    primary_encoder_subnet_mc_out_p:   "10.70.7.0/24"
-    primary_encoder_subnet_mc_out_s:   "10.80.7.0/24"
-
-    secondary_encoder_subnet_mc_in_p:  "10.70.6.0/24"
-    secondary_encoder_subnet_mc_in_s:  "10.80.6.0/24"
-    secondary_encoder_subnet_mc_out_p: "10.70.8.0/24"
-    secondary_encoder_subnet_mc_out_s: "10.80.8.0/24"
     last_octet: ""
 
   tasks:
@@ -56,29 +47,16 @@
       debug:
         msg: "Last octet of management interface IP is {{ last_octet }}"
 
-    - name: Set primary encoder subnets
+    - name: Set encoder subnets
       set_fact:
-        subnet_mc_in_p: "{{ primary_encoder_subnet_mc_in_p | regex_replace('.0/.*', '') }}"
-        subnet_mc_in_s: "{{ primary_encoder_subnet_mc_in_s | regex_replace('.0/.*', '') }}"
-        subnet_mc_out_p: "{{ primary_encoder_subnet_mc_out_p | regex_replace('.0/.*', '') }}"
-        subnet_mc_out_s: "{{ primary_encoder_subnet_mc_out_s | regex_replace('.0/.*', '') }}"
-        interface_mc_in_p: "{{ primary_encoder_interface_mc_in_p }}"
-        interface_mc_in_s: "{{ primary_encoder_interface_mc_in_s }}"
-        interface_mc_out_p: "{{ primary_encoder_interface_mc_out_p }}"
-        interface_mc_out_s: "{{ primary_encoder_interface_mc_out_s }}"
-      when: mgmt_ip_config.stdout.find('10.17.11.') != -1
-
-    - name: Set secondary encoder subnets
-      set_fact:
-        subnet_mc_in_p: "{{ secondary_encoder_subnet_mc_in_p | regex_replace('.0/.*', '') }}"
-        subnet_mc_in_s: "{{ secondary_encoder_subnet_mc_in_s | regex_replace('.0/.*', '') }}"
-        subnet_mc_out_p: "{{ secondary_encoder_subnet_mc_out_p | regex_replace('.0/.*', '') }}"
-        subnet_mc_out_s: "{{ secondary_encoder_subnet_mc_out_s | regex_replace('.0/.*', '') }}"
-        interface_mc_in_p: "{{ secondary_encoder_interface_mc_in_p }}"
-        interface_mc_in_s: "{{ secondary_encoder_interface_mc_in_s }}"
-        interface_mc_out_p: "{{ secondary_encoder_interface_mc_out_p }}"
-        interface_mc_out_s: "{{ secondary_encoder_interface_mc_out_s }}"
-      when: mgmt_ip_config.stdout.find('10.17.12.') != -1
+        subnet_mc_in_p: "{{ subnet_mc_in_p | regex_replace('.0/.*', '') }}"
+        subnet_mc_in_s: "{{ subnet_mc_in_s | regex_replace('.0/.*', '') }}"
+        subnet_mc_out_p: "{{ subnet_mc_out_p | regex_replace('.0/.*', '') }}"
+        subnet_mc_out_s: "{{ subnet_mc_out_s | regex_replace('.0/.*', '') }}"
+        interface_mc_in_p: "{{ interface_mc_in_p }}"
+        interface_mc_in_s: "{{ interface_mc_in_s }}"
+        interface_mc_out_p: "{{ interface_mc_out_p }}"
+        interface_mc_out_s: "{{ interface_mc_out_s }}"
 
     - name: Check if multicast interfaces are available
       command: ip link show {{ item }}
