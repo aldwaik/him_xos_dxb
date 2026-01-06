@@ -4,10 +4,11 @@
   become: yes
   vars:
     interface_mgmt: "bond-mgmt"
-    interface_mc_in_p:    "ens3f0"
-    interface_mc_in_s:    "ens4f0"
-    interface_mc_out_p:   "ens3f1"
-    interface_mc_out_s:   "ens4f1"
+    # Interface names will be auto-detected based on available interfaces
+    interface_mc_in_p: ""
+    interface_mc_in_s: ""
+    interface_mc_out_p: ""
+    interface_mc_out_s: ""
 
     subnet_mc_in_p:    "10.25.1.0/24"
     subnet_mc_in_s:    "10.25.4.0/24"
@@ -29,6 +30,75 @@
       fail:
         msg: "Management interface is not available."
       when: result.results | selectattr('rc', 'ne', 0) | list | length > 0
+
+    # --------------------------
+    # Auto-detect multicast interface pattern
+    # --------------------------
+    - name: Check for interface pattern 1 (ens3f0/ens4f0/ens3f1/ens4f1)
+      command: ip link show {{ item }}
+      register: pattern1_check
+      loop:
+        - "ens3f0"
+        - "ens4f0"
+        - "ens3f1"
+        - "ens4f1"
+      changed_when: false
+      failed_when: false
+
+    - name: Check for interface pattern 2 (ens2f0/ens5f0/ens2f1/ens5f1)
+      command: ip link show {{ item }}
+      register: pattern2_check
+      loop:
+        - "ens2f0"
+        - "ens5f0"
+        - "ens2f1"
+        - "ens5f1"
+      changed_when: false
+      failed_when: false
+
+    - name: Determine which pattern exists
+      set_fact:
+        pattern1_exists: >-
+          {{
+            pattern1_check.results | selectattr('rc', 'equalto', 0) | list | length == 4
+          }}
+        pattern2_exists: >-
+          {{
+            pattern2_check.results | selectattr('rc', 'equalto', 0) | list | length == 4
+          }}
+
+    - name: Set multicast interfaces for pattern 1
+      set_fact:
+        interface_mc_in_p: "ens3f0"
+        interface_mc_in_s: "ens4f0"
+        interface_mc_out_p: "ens3f1"
+        interface_mc_out_s: "ens4f1"
+      when: pattern1_exists | bool
+
+    - name: Set multicast interfaces for pattern 2
+      set_fact:
+        interface_mc_in_p: "ens2f0"
+        interface_mc_in_s: "ens5f0"
+        interface_mc_out_p: "ens2f1"
+        interface_mc_out_s: "ens5f1"
+      when: pattern2_exists | bool
+
+    - name: Fail if no multicast interface pattern detected
+      fail:
+        msg: >-
+          No valid multicast interface pattern detected.
+          Pattern 1 (ens3f0/ens4f0/ens3f1/ens4f1) exists: {{ pattern1_exists | default(false) }}
+          Pattern 2 (ens2f0/ens5f0/ens2f1/ens5f1) exists: {{ pattern2_exists | default(false) }}
+      when: (not pattern1_exists | default(false) | bool) and (not pattern2_exists | default(false) | bool)
+
+    - name: Debug detected multicast interfaces
+      debug:
+        msg:
+          - "Detected multicast interfaces:"
+          - "  MC_IN_P:  {{ interface_mc_in_p }}"
+          - "  MC_IN_S:  {{ interface_mc_in_s }}"
+          - "  MC_OUT_P: {{ interface_mc_out_p }}"
+          - "  MC_OUT_S: {{ interface_mc_out_s }}"
 
     - name: Check IP configuration of management interface
       command: nmcli -t -f IP4.ADDRESS,GENERAL.STATE device show {{ interface_mgmt }}
