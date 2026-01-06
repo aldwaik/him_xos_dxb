@@ -16,39 +16,23 @@
 
     last_octet: ""
 
-    mc_connections:
-      - name: "MC_IN_P"
-        interface: "{{ interface_mc_in_p }}"
-        subnet: "{{ subnet_mc_in_p }}"
-      - name: "MC_IN_S"
-        interface: "{{ interface_mc_in_s }}"
-        subnet: "{{ subnet_mc_in_s }}"
-      - name: "MC_OUT_P"
-        interface: "{{ interface_mc_out_p }}"
-        subnet: "{{ subnet_mc_out_p }}"
-      - name: "MC_OUT_S"
-        interface: "{{ interface_mc_out_s }}"
-        subnet: "{{ subnet_mc_out_s }}"
-
   tasks:
-    # --------------------------
-    # Precondition checks
-    # --------------------------
     - name: Check if management interface is available
-      command: ip link show {{ interface_mgmt }}
-      register: mgmt_interface_check
-      changed_when: false
-      failed_when: false
+      command: ip link show {{ item }}
+      register: result
+      failed_when: result.rc != 0
+      with_items:
+        - "{{ interface_mgmt }}"
+      ignore_errors: yes
 
-    - name: Fail if management interface is not available
+    - name: Fail if any interface is not available
       fail:
-        msg: "Management interface {{ interface_mgmt }} is not available."
-      when: mgmt_interface_check.rc != 0
+        msg: "Management interface is not available."
+      when: result.results | selectattr('rc', 'ne', 0) | list | length > 0
 
     - name: Check IP configuration of management interface
       command: nmcli -t -f IP4.ADDRESS,GENERAL.STATE device show {{ interface_mgmt }}
       register: mgmt_ip_config
-      changed_when: false
 
     - name: Fail if management interface has no IP or is not UP
       fail:
@@ -69,168 +53,64 @@
         subnet_mc_in_s: "{{ subnet_mc_in_s | regex_replace('.0/.*', '') }}"
         subnet_mc_out_p: "{{ subnet_mc_out_p | regex_replace('.0/.*', '') }}"
         subnet_mc_out_s: "{{ subnet_mc_out_s | regex_replace('.0/.*', '') }}"
-        mc_connections:
-          - name: "MC_IN_P"
-            interface: "{{ interface_mc_in_p }}"
-            subnet: "{{ subnet_mc_in_p }}"
-          - name: "MC_IN_S"
-            interface: "{{ interface_mc_in_s }}"
-            subnet: "{{ subnet_mc_in_s }}"
-          - name: "MC_OUT_P"
-            interface: "{{ interface_mc_out_p }}"
-            subnet: "{{ subnet_mc_out_p }}"
-          - name: "MC_OUT_S"
-            interface: "{{ interface_mc_out_s }}"
-            subnet: "{{ subnet_mc_out_s }}"
 
     - name: Check if multicast interfaces are available
-      command: ip link show {{ item.interface }}
-      register: mc_interface_checks
-      loop: "{{ mc_connections }}"
-      changed_when: false
-      failed_when: false
+      command: ip link show {{ item }}
+      register: result_mc
+      failed_when: result_mc.rc != 0
+      with_items:
+        - "{{ interface_mc_in_p }}"
+        - "{{ interface_mc_in_s }}"
+        - "{{ interface_mc_out_p }}"
+        - "{{ interface_mc_out_s }}"
+      ignore_errors: yes
 
-    - name: Fail if any multicast interface is not available
+    - name: Fail if multicast interface/s not available
       fail:
-        msg: >-
-          Multicast interface(s) not available:
-          {{ mc_interface_checks.results | selectattr('rc', 'ne', 0) | map(attribute='item.interface') | list }}
-      when: mc_interface_checks.results | selectattr('rc', 'ne', 0) | list | length > 0
+        msg: "Multicast interface/s not available."
+      when: result_mc.results | selectattr('rc', 'ne', 0) | list | length > 0
 
     - name: Fail if encoder subnets are not set
       fail:
         msg: "Encoder subnets are not set."
       when: subnet_mc_in_p is not defined or subnet_mc_in_s is not defined or subnet_mc_out_p is not defined or subnet_mc_out_s is not defined
 
-    # --------------------------
-    # Cleanup orphaned connections
-    # --------------------------
-    - name: Get all NetworkManager connections
-      command: "nmcli -t -f NAME con show"
-      register: all_connections
-      changed_when: false
-
-    - name: Get connections with device mapping
-      command: "nmcli -t -f NAME,DEVICE con show"
-      register: connections_with_devices
-      changed_when: false
-
-    - name: Find connections with no device (orphaned)
-      set_fact:
-        connections_no_device: >-
-          {{
-            connections_with_devices.stdout_lines | default([])
-            | select('match', '^([^:]+):$') | map('regex_replace', '^([^:]+):$', '\\1') | list
-          }}
-
-    - name: Find connections matching orphaned patterns
-      set_fact:
-        connections_matching_patterns: >-
-          {{
-            all_connections.stdout_lines | default([])
-            | select('match', '^(Wired connection|MC_|ens[0-9]|eth[0-9])') | list
-          }}
-
-    - name: Combine orphaned connections (exclude current MC connections)
-      set_fact:
-        connections_to_delete: >-
-          {{
-            ((connections_no_device | default([])) + (connections_matching_patterns | default([])))
-            | difference(mc_connections | map(attribute='name') | list)
-            | unique | list
-          }}
-
-    - name: Debug connections to delete
-      debug:
-        msg: "Found {{ connections_to_delete | length }} orphaned connections to delete: {{ connections_to_delete }}"
-      when: connections_to_delete | length > 0
-
-    - name: Bring down orphaned connections before deletion
-      command: "nmcli con down '{{ item }}'"
-      loop: "{{ connections_to_delete }}"
-      failed_when: false
-      changed_when: false
-      when: connections_to_delete | length > 0
-
-    - name: Delete orphaned connections
-      command: "nmcli con delete '{{ item }}'"
-      loop: "{{ connections_to_delete }}"
-      failed_when: false
-      register: delete_orphans
-      when: connections_to_delete | length > 0
-
-    - name: Debug deletion results
-      debug:
-        msg:
-          - "Attempted to delete {{ connections_to_delete | length }} connections"
-          - "Connections: {{ connections_to_delete }}"
-      when: (connections_to_delete | length > 0) and (delete_orphans.results is defined)
-
-    # --------------------------
-    # Configure multicast interfaces (idempotent)
-    # --------------------------
-    - name: Check which multicast connections already exist
-      command: "nmcli -t -f NAME con show"
-      register: existing_mc_connections
-      changed_when: false
-
-    - name: Set existence flags for multicast connections
-      set_fact:
-        mc_connections_exist: >-
-          {{
-            mc_connections | map(attribute='name') | map('string')
-            | select('in', existing_mc_connections.stdout_lines) | list
-          }}
-
-    - name: Debug multicast connection existence
-      debug:
-        msg:
-          - "Existing MC connections: {{ mc_connections_exist }}"
-          - "Connections to create: {{ mc_connections | map(attribute='name') | list | difference(mc_connections_exist) }}"
-
-    - name: Create multicast connections if missing
-      command: >
-        nmcli con add type ethernet
-        ifname {{ item.interface }}
-        con-name {{ item.name }}
-        ipv6.method disabled
-        connection.autoconnect yes
-      loop: "{{ mc_connections }}"
-      when: item.name not in mc_connections_exist
-      register: create_mc_connections
-
-    - name: Configure multicast connection IP addresses
-      command: >
-        nmcli con mod {{ item.name }}
-        ipv4.addresses "{{ item.subnet }}.{{ last_octet }}/24"
-        ipv4.method manual
-        ipv6.method disabled
-        connection.autoconnect yes
-      loop: "{{ mc_connections }}"
-      register: configure_mc_ips
-
-    - name: Reload NetworkManager connections
-      command: nmcli con reload
-      changed_when: false
-
-    - name: Bring up multicast connections
-      command: "nmcli con up {{ item.name }}"
-      loop: "{{ mc_connections }}"
-      register: bring_up_mc
+    - name: Delete old connections
+      shell: |
+        nmcli -t -f NAME,DEVICE con show | awk -F: '$2 == "" {print $1}' | xargs -I {} nmcli con delete "{}"
+        nmcli -t -f NAME con show | grep -E "^Wired connection" | xargs -I {} nmcli con delete "{}"
+        nmcli -t -f NAME con show | grep -E "^MC_" | xargs -I {} nmcli con delete "{}"
+        nmcli -t -f NAME con show | grep -E "^ens" | xargs -I {} nmcli con delete "{}"
+        nmcli -t -f NAME con show | grep -E "^eth" | xargs -I {} nmcli con delete "{}"
+      register: deleted_connections
+      ignore_errors: yes
       failed_when: false
 
-    - name: Wait for multicast interfaces to obtain IP addresses
-      command: "nmcli -g IP4.ADDRESS dev show {{ item.interface }}"
-      loop: "{{ mc_connections }}"
-      register: mc_ip_checks
-      retries: 5
-      delay: 2
-      until: mc_ip_checks.stdout is search('.+/.+')
-      failed_when: false
-
-    - name: Debug multicast interface IPs after bring-up
+    - name: Debug the deleted connections
       debug:
-        msg: "{{ item.item.name }} ({{ item.item.interface }}): {{ item.stdout | default('No IP assigned') }}"
-      loop: "{{ mc_ip_checks.results }}"
-      loop_control:
-        label: "{{ item.item.name }}"
+        msg: "Deleted connections: {{ deleted_connections.stdout_lines }}"
+
+    - name: Configure Multicast Interfaces and bring them up
+      shell: |
+        nmcli con add type ethernet ifname {{ interface_mc_in_p }} con-name MC_IN_P
+        nmcli con add type ethernet ifname {{ interface_mc_in_s }} con-name MC_IN_S
+        nmcli con add type ethernet ifname {{ interface_mc_out_p }} con-name MC_OUT_P
+        nmcli con add type ethernet ifname {{ interface_mc_out_s }} con-name MC_OUT_S
+        nmcli con mod MC_IN_P  ipv4.addresses {{ subnet_mc_in_p }}.{{ last_octet }}/24  ipv4.method manual ipv6.method disabled
+        nmcli con mod MC_IN_S  ipv4.addresses {{ subnet_mc_in_s }}.{{ last_octet }}/24  ipv4.method manual ipv6.method disabled
+        nmcli con mod MC_OUT_P ipv4.addresses {{ subnet_mc_out_p }}.{{ last_octet }}/24 ipv4.method manual ipv6.method disabled
+        nmcli con mod MC_OUT_S ipv4.addresses {{ subnet_mc_out_s }}.{{ last_octet }}/24 ipv4.method manual ipv6.method disabled
+        nmcli con up  MC_IN_P
+        nmcli con up  MC_IN_S
+        nmcli con up  MC_OUT_P
+        nmcli con up  MC_OUT_S
+      register: created_connections
+
+    - name: Debug the Created connections
+      debug:
+        msg: "Created connections: {{ created_connections.stdout_lines }}"
+
+    - name: Restart NetworkManager
+      service:
+        name: NetworkManager
+        state: restarted
