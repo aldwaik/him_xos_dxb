@@ -316,8 +316,7 @@
     - name: Delete legacy 'eno1' connection if it still exists and is not our slave profile
       command: nmcli con delete eno1
       when: >-
-        ('eno1' in nm_con_names_post.stdout_lines) and
-        (slave1_con not in nm_con_names_post.stdout_lines)
+        ('eno1' in nm_con_names_post.stdout_lines)
       failed_when: false
       register: delete_eno1_result
 
