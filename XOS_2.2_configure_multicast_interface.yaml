@@ -56,9 +56,13 @@
         mgmt_ip_address: >-
           {{
             (mgmt_ip_config.stdout_lines | default([])
-            | select('match', '^IP4\\.ADDRESS:') | list | first
-            | regex_replace('^IP4\\.ADDRESS:', '')
-            | regex_replace('/.*', '')) | default('')
+            | select('match', '^IP4\\.ADDRESS.*:.*/') | list | length > 0)
+            | ternary(
+                (mgmt_ip_config.stdout_lines | default([])
+                | select('match', '^IP4\\.ADDRESS.*:.*/') | list | first
+                | regex_replace('^IP4\\.ADDRESS(\\[\\d+\\])?:', '') | regex_replace('/.*', '')),
+                ''
+              )
           }}
 
     - name: Check if management interface is connected
