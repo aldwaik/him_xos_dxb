@@ -297,8 +297,27 @@
       register: all_connections
       changed_when: false
 
+    - name: Bring down orphaned connections before deletion (if active)
+      command: "nmcli con down '{{ item }}'"
+      loop:
+        - "Wired connection 1"
+        - "Wired connection 2"
+        - "Ethernet connection 1"
+        - "System eth0"
+        - "System eno1"
+        - "System eno2"
+        - "System eno3"
+        - "System eno4"
+        - "System ens3f0"
+        - "System ens3f1"
+        - "System ens4f0"
+        - "System ens4f1"
+      when: item in all_connections.stdout_lines
+      failed_when: false
+      changed_when: false
+
     - name: Remove orphaned/stale connections
-      command: "nmcli con delete {{ item }}"
+      command: "nmcli con delete '{{ item }}'"
       loop:
         - "Wired connection 1"
         - "Wired connection 2"
@@ -315,3 +334,7 @@
       when: item in all_connections.stdout_lines
       failed_when: false
       register: delete_orphans
+
+    - name: Debug connections after connection deletion
+      debug:
+        var: delete_orphans.stdout_lines
