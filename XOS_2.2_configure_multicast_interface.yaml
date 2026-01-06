@@ -62,22 +62,20 @@
             mgmt_ip_config.stdout_lines | default([])
             | select('match', '^IP4\\.ADDRESS') | list
           }}
+        mgmt_ip_address: ""
 
     - name: Debug extracted IP lines
       debug:
         var: mgmt_ip_lines
 
-    - name: Extract management interface IP address
+    - name: Extract management interface IP address (when IP exists)
       set_fact:
         mgmt_ip_address: >-
           {{
-            (mgmt_ip_lines | default([]) | length > 0)
-            | ternary(
-                (mgmt_ip_lines[0]
-                | regex_replace('^IP4\\.ADDRESS(\\[\\d+\\])?:', '') | regex_replace('/.*', '')),
-                ''
-              )
+            mgmt_ip_lines[0]
+            | regex_replace('^IP4\\.ADDRESS(\\[\\d+\\])?:', '') | regex_replace('/.*', '')
           }}
+      when: (mgmt_ip_lines | default([]) | length) > 0
 
     - name: Check if management interface is connected
       set_fact:
