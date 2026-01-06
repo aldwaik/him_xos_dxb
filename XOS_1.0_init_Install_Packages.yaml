@@ -24,6 +24,7 @@
       - htop
       - glances
       - nmon
+      - systemd-nspawn
     
     docker_packages:
       - docker-ce
