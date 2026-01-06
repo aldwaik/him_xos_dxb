@@ -20,30 +20,53 @@
 
   tasks:
     # --------------------------
-    # Capture current IP before any changes
+    # Capture current IP before any changes (check bond first, then eno1)
     # --------------------------
-    - name: Read IPv4 address from eno1 BEFORE cleanup (preserve connectivity)
+    - name: Check if bond already exists and has IP
+      command: "nmcli -g IP4.ADDRESS dev show {{ bond_name }}"
+      register: bond_ip_raw_initial
+      changed_when: false
+      failed_when: false
+
+    - name: Extract bond IP address if it exists
+      set_fact:
+        bond_ip_initial: >-
+          {{
+            (bond_ip_raw_initial.stdout_lines | default([]) | select('match','.+/.+') | list | first)
+            | default('')
+          }}
+        captured_ip_addr: ""
+
+    - name: Read IPv4 address from eno1 (only if bond doesn't have IP)
       command: "nmcli -g IP4.ADDRESS dev show {{ slave1_if }}"
       register: eno1_ip_raw_initial
       changed_when: false
       failed_when: false
+      when: bond_ip_initial == ""
 
-    - name: Extract IP address (CIDR format)
+    - name: Extract IP address from eno1 (CIDR format)
       set_fact:
         captured_ip_addr: >-
           {{
             (eno1_ip_raw_initial.stdout_lines | default([]) | select('match','.+/.+') | list | first)
             | default('')
           }}
+      when: bond_ip_initial == ""
 
-    - name: Debug captured IP from eno1
+    - name: Debug IP capture results
       debug:
-        msg: "Captured IP from {{ slave1_if }}: {{ captured_ip_addr }}"
+        msg:
+          - "Bond IP (if exists): {{ bond_ip_initial }}"
+          - "Captured IP from {{ slave1_if }}: {{ captured_ip_addr | default('N/A') }}"
+          - "Will use: {{ bond_ip_initial if bond_ip_initial != '' else captured_ip_addr | default('NONE') }}"
 
-    - name: Fail if eno1 has no IP address
+    - name: Fail if no IP address found (neither bond nor eno1)
       fail:
-        msg: "No IPv4 address found on {{ slave1_if }}. Cannot proceed safely."
-      when: captured_ip_addr == ""
+        msg: >-
+          No IPv4 address found. Bond {{ bond_name }} IP={{ bond_ip_initial }},
+          {{ slave1_if }} IP={{ captured_ip_addr | default('N/A') }}.
+          Cannot proceed safely.
+      when: (bond_ip_initial == "") and (captured_ip_addr | default('') == "")
 
     # --------------------------
     # Hostname reconciliation
@@ -125,39 +148,18 @@
         var: network_info.stdout_lines
 
     # --------------------------
-    # Read IPv4 (idempotent):
-    # Already captured before cleanup, but check bond if already exists
+    # Determine final IP address to use (bond takes precedence)
     # --------------------------
-    - name: Read IPv4 address from bond if it already exists
-      command: "nmcli -g IP4.ADDRESS dev show {{ bond_name }}"
-      register: bond_ip_raw
-      changed_when: false
-      failed_when: false
-
-    - name: Use bond IP if available, otherwise use captured IP from eno1
+    - name: Set final IP address (prefer bond IP if it exists, otherwise use captured eno1 IP)
       set_fact:
-        ip_addr: >-
-          {{
-            (
-              (bond_ip_raw.stdout_lines | default([]) | select('match','.+/.+') | list | first)
-              | default(captured_ip_addr, true)
-            )
-            | default('')
-          }}
+        ip_addr: "{{ bond_ip_initial if bond_ip_initial != '' else (captured_ip_addr | default('')) }}"
 
     - name: Debug final IP selection
       debug:
         msg:
-          - "Bond IP output (if exists): {{ bond_ip_raw.stdout_lines | default([]) }}"
-          - "Captured IP from eno1: {{ captured_ip_addr }}"
+          - "Bond IP (initial check): {{ bond_ip_initial }}"
+          - "Captured IP from eno1: {{ captured_ip_addr | default('N/A') }}"
           - "Final IP for bond-mgmt: {{ ip_addr }}"
-
-    - name: Fail if no IP address available
-      fail:
-        msg: >-
-          No IPv4 address found. Bond IP={{ bond_ip_raw.stdout_lines | default([]) }},
-          Captured eno1 IP={{ captured_ip_addr }}
-      when: ip_addr == ""
 
     # --------------------------
     # Ensure bond + slaves exist
