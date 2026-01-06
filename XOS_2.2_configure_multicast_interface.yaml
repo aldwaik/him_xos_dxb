@@ -90,7 +90,7 @@
       debug:
         msg: "Deleted connections: {{ deleted_connections.stdout_lines }}"
 
-    - name: Configure Multicast Interfaces and bring them up
+    - name: Configure Multicast Interfaces
       shell: |
         nmcli con add type ethernet ifname {{ interface_mc_in_p }} con-name MC_IN_P
         nmcli con add type ethernet ifname {{ interface_mc_in_s }} con-name MC_IN_S
@@ -100,17 +100,22 @@
         nmcli con mod MC_IN_S  ipv4.addresses {{ subnet_mc_in_s }}.{{ last_octet }}/24  ipv4.method manual ipv6.method disabled
         nmcli con mod MC_OUT_P ipv4.addresses {{ subnet_mc_out_p }}.{{ last_octet }}/24 ipv4.method manual ipv6.method disabled
         nmcli con mod MC_OUT_S ipv4.addresses {{ subnet_mc_out_s }}.{{ last_octet }}/24 ipv4.method manual ipv6.method disabled
-        nmcli con up  MC_IN_P
-        nmcli con up  MC_IN_S
-        nmcli con up  MC_OUT_P
-        nmcli con up  MC_OUT_S
       register: created_connections
 
     - name: Debug the Created connections
       debug:
         msg: "Created connections: {{ created_connections.stdout_lines }}"
 
-    - name: Restart NetworkManager
-      service:
-        name: NetworkManager
-        state: restarted
+    - name: Reload NetworkManager connections
+      command: nmcli con reload
+      changed_when: false
+
+    - name: Bring up multicast interfaces
+      command: "nmcli con up {{ item }}"
+      loop:
+        - "MC_IN_P"
+        - "MC_IN_S"
+        - "MC_OUT_P"
+        - "MC_OUT_S"
+      register: bring_up_results
+      failed_when: false
