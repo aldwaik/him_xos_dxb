@@ -31,6 +31,27 @@
       - containerd.io
   
   tasks:
+    - name: Enable and start cockpit.socket
+      ansible.builtin.systemd:
+        name: cockpit.socket
+        enabled: true
+        state: started
+      register: cockpit_status
+      changed_when: cockpit_status.changed
+
+    - name: Disable mcelog service
+      ansible.builtin.systemd:
+        name: mcelog.service
+        enabled: false
+        state: stopped
+      ignore_errors: true
+
+    - name: Disable NetworkManager-wait-online service
+      ansible.builtin.systemd:
+        name: NetworkManager-wait-online.service
+        enabled: false
+        state: stopped
+      ignore_errors: true
     - name: Install EPEL release repository
       ansible.builtin.dnf:
         name: epel-release
